@@ -51,7 +51,7 @@ func startKontrol(pem, pub string, port int) (*Kontrol, *Config) {
 	conf.KontrolUser = "testuser"
 	conf.KiteKey = testutil.NewToken("testuser", pem, pub).Raw
 	conf.ReadEnvironmentVariables()
-
+	conf.UseWebRTC = true
 	DefaultPort = port
 	kon := New(conf.Copy(), "1.0.0")
 	// kon.Kite.SetLogLevel(kite.DEBUG)
@@ -98,6 +98,10 @@ type HelloKite struct {
 
 func NewHelloKite(name string, conf *Config) (*HelloKite, error) {
 	k := kite.New(name, "1.0.0")
+	k.WebRTCHandler = func(req *kite.Request) (interface{}, error) {
+		fmt.Println("handle webrtc called")
+		return nil, nil
+	}
 	k.Config = conf.Config.Copy()
 	k.Config.Port = 0
 	k.Config.KiteKey = testutil.NewToken(name, conf.Private, conf.Public).Raw

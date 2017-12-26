@@ -1,18 +1,83 @@
 package kite
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
+	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/koding/kite/protocol"
 	"github.com/koding/kite/sockjsclient"
 	"github.com/koding/kite/systeminfo"
 	"golang.org/x/crypto/ssh/terminal"
 )
+
+// WebRTCHandlerName provides the naming scheme for the handler
+const WebRTCHandlerName = "kite.handleWebRTC"
+
+// NewWebRCTHandler creates a handlerFunc for web rtc request handling in Kite.
+func NewWebRCTHandler() HandlerFunc {
+
+	kitesColl := make(map[string]*Client)
+	var mu sync.RWMutex
+
+	registerSrc := func(src *Client) {
+		mu.Lock()
+		kitesColl[src.ID] = src
+		mu.Unlock()
+
+		src.OnDisconnect(func() {
+			time.Sleep(time.Second * 2)
+			id := src.ID
+			// delete from the collection
+			mu.Lock()
+			delete(kitesColl, id)
+			mu.Unlock()
+			fmt.Println("disconnecting-->", id)
+		})
+	}
+
+	getDst := func(dst string) (*Client, error) {
+		if dst == "" {
+			return nil, errors.New("dst not set")
+		}
+
+		mu.RLock()
+		dstKite, ok := kitesColl[dst]
+		mu.RUnlock()
+		if !ok {
+			return nil, errors.New("dst not registered")
+		}
+
+		return dstKite, nil
+	}
+
+	// HandleWebRTC handles the WebRTC requests
+	return func(r *Request) (interface{}, error) {
+		var args protocol.WebRTCSignalMessage
+
+		if err := r.Args.One().Unmarshal(&args); err != nil {
+			return nil, fmt.Errorf("invalid query: %s", err)
+		}
+
+		args.Src = r.Client.ID
+
+		registerSrc(r.Client)
+
+		dst, err := getDst(args.Dst)
+		if err != nil {
+			return nil, err
+		}
+
+		return nil, dst.SendWebRTCRequest(&args)
+	}
+}
 
 func (k *Kite) addDefaultHandlers() {
 	// Default RPC methods
@@ -26,6 +91,9 @@ func (k *Kite) addDefaultHandlers() {
 	k.HandleFunc("kite.getPass", handleGetPass)
 	if runtime.GOOS == "darwin" {
 		k.HandleFunc("kite.notify", handleNotifyDarwin)
+	}
+	if k.WebRTCHandler != nil {
+		k.HandleFunc(WebRTCHandlerName, k.WebRTCHandler)
 	}
 }
 
